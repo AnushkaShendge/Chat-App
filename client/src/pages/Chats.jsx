@@ -6,6 +6,7 @@ import { UserContext } from '../UserContext';
 import { ImCross } from "react-icons/im";
 import { uniqBy } from 'lodash';
 import axios from "axios";
+import Contact from "./Conatct";
 
 function Chats() {
   const [ws, setWs] = useState(null);
@@ -15,6 +16,7 @@ function Chats() {
   const [newMessageText, setNewMessageText] = useState('');
   const [messages, setMessages] = useState([]);
   const divUnderMessages = useRef()
+  const [offline , setOffline] = useState([])
 
   useEffect(() => {
     const ws = new WebSocket('ws://localhost:4000');
@@ -53,7 +55,7 @@ function Chats() {
       recipient: selContact,
       text: newMessageText,
       sender: id,
-      id: Date.now(),
+      _id: Date.now(),
     };
     ws.send(JSON.stringify(message));
     setMessages(prev => ([...prev, message]));
@@ -68,54 +70,59 @@ function Chats() {
   useEffect(() => {
     if(selContact){
         axios.get(`http://localhost:4000/messages/${selContact}`).then((response) =>{
-            const messagesData = response.data.map((message) => ({
-                sender: message.sender,
-                text: message.text,
-              }));
-              setMessages(messagesData);
+            setMessages(response.data);
         }).catch((err) => {
             console.log(err)
         })
     }
-
-
   } , [selContact])
+
+  useEffect(() => {
+    axios.get('http://localhost:4000/people').then((response) => {
+        const offlinePeopleArr = response.data
+        .filter(p => p._id !== id)
+        .filter(p => !Object.keys(onlinePeople).includes(p._id))
+        const offlinePeople = {}
+        offlinePeopleArr.forEach(p => {
+          offlinePeople[p._id] = p
+        })
+        setOffline(offlinePeople)
+    })
+  } , [onlinePeople])
 
   const onlinePeopleExcluder = { ...onlinePeople };
   delete onlinePeopleExcluder[id];
-  const messWithoutDupes = uniqBy(messages, 'id');
+  const messWithoutDupes = uniqBy(messages, '_id');
 
   return (
     <div className="flex h-screen">
-      <div className="w-1/3 p-2 bg-sky-100">
+      <div className="w-1/3 p-2 h-screen overflow-y-auto">
         <div className="text-blue-500 font-bold gap-2 flex items-center justify-center py-2 mb-4">
           <IoChatbubblesSharp size={24} /> ChatApp
         </div>
         {Object.keys(onlinePeopleExcluder).length > 0 ? (
           Object.keys(onlinePeopleExcluder).map(userId => (
-            <div key={userId} onClick={() => setSelContact(userId)}
-              className={"border-b border-gray-100 flex items-center gap-5 cursor-pointer " + (userId === selContact ? 'bg-blue-50' : '')}>
-              {userId === selContact && (
-                <div className="w-1 bg-blue-500 h-12 rounded-r-md"></div>
-              )}
-              <div className="flex items-center gap-5 py-2 px-2">
-                <Avatar username={onlinePeople[userId]} userId={userId} />
-                <span className="text-gray-700">{onlinePeople[userId]}</span>
-              </div>
-            </div>
+            <Contact key={userId} id={userId} username={onlinePeopleExcluder[userId]} onClick={() => setSelContact(userId)} selected={userId === selContact} online={true} />
+          ))
+        ) : (
+          <div className="text-gray-500 text-center">No one is online</div>
+        )}
+        {Object.keys(offline).length > 0 ? (
+          Object.keys(offline).map(userId => (
+            <Contact key={userId} id={userId} username={offline[userId].username} onClick={() => setSelContact(userId)} selected={userId === selContact} online={false} />
           ))
         ) : (
           <div className="text-gray-500 text-center">No one is online</div>
         )}
       </div>
       {!selContact && (
-        <div className="flex items-center justify-center text-2xl font-bold text-gray-300 gap-2 mx-auto">
+        <div className="flex items-center justify-center text-2xl font-bold text-gray-400 gap-2 bg-blue-200 w-full">
           <ImCross /> Select a person from the sidebar
         </div>
       )}
       {selContact && (
         <div className="flex flex-col w-2/3">
-          <div className="flex-grow p-2 overflow-y-scroll bg-blue-200">
+          <div className="flex-grow p-2 bg-blue-200">
             {messWithoutDupes.length > 0 ? (
               messWithoutDupes.map((message, index) => (
                 <div key={index} className={`mb-2 ${message.sender === id ? 'text-right' : 'text-left'}`}>
