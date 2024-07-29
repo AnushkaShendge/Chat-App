@@ -8,6 +8,8 @@ const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const ws = require('ws')
 const Message = require('./models/Message')
+const fs = require('fs')
+const path = require('path');
 
 dotenv.config();
 
@@ -22,6 +24,7 @@ mongoose.connect(process.env.MONGO_URL)
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(cors({
   credentials: true,
   origin: 'http://localhost:5173',
@@ -101,6 +104,10 @@ app.get('/messages/:userId' , async(req,res) =>{
   const {userId} = req.params;
   const userData = await getUserDataFromRequest(req);
   const ourUserId =userData.userId
+
+  if (!mongoose.Types.ObjectId.isValid(userId) || !mongoose.Types.ObjectId.isValid(ourUserId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+  }
   const mess = await Message.find({
     sender: {$in: [userId , ourUserId]},
     recipient: {$in: [userId , ourUserId]},
@@ -112,6 +119,10 @@ app.get('/messages/:userId' , async(req,res) =>{
 app.get('/people' , async(req,res) => {
   const offlineUsers = await User.find({} , {'_id':1 , 'username':1})
   res.json(offlineUsers)
+})
+
+app.post('/logout' , async(req,res) => {
+  res.cookie('token' , '' ).json('ok')
 })
 
 const wss = new ws.WebSocketServer({server});
@@ -132,6 +143,7 @@ wss.on('connection' , (connection , req) => {
     connection.ping();
     connection.deathTimer = setTimeout(() => {
       connection.isAlive = false
+      clearInterval(connection.timer)
       connection.terminate()
       notifyAboutOnlinePeople()
       console.log('dead')
@@ -160,16 +172,37 @@ wss.on('connection' , (connection , req) => {
   connection.on('message' , async(message) => {
     message = JSON.parse(message.toString());
 
-    const {recipient , text} = message
-    if(recipient && text){
+    const {recipient , text , file} = message
+    let filename = null
+    console.log(file)
+    if (file) {
+      const fileParts = file.name.split('.');
+      const fileExt = fileParts[fileParts.length - 1];
+      filename = `${Date.now()}.${fileExt}`;
+      const filePath = path.join(__dirname, 'uploads', filename);
+
+      // Ensure you decode the base64 string correctly
+      const base64Data = file.data.replace(/^data:image\/png;base64,/, ""); // Update the regex based on your base64 string format
+      const bufferData = Buffer.from(base64Data, 'base64');
+
+        fs.writeFile(filePath, bufferData, (err) => {
+          if (err) {
+            console.error('Error writing file:', err);
+          } else {
+            console.log('File saved successfully:', filePath);
+          }
+        });
+      }
+    if(recipient && (text || file)){
       const messageDoc = await Message.create({
         sender: connection.userId,
         recipient: recipient,
-        text: text
+        text: text,
+        file: filename 
       });
 
       [...wss.clients].filter(c => c.userId === recipient)
-      .forEach(c => c.send(JSON.stringify({text , sender:connection.userId , _id:messageDoc._id , recipient})))
+      .forEach(c => c.send(JSON.stringify({text , sender:connection.userId , _id:messageDoc._id , recipient , file: file ? filename : null })))
     }
   });
   notifyAboutOnlinePeople()
